@@ -260,6 +260,7 @@ async function getUserIssueStats(user, options = {}) {
     userEmail: user.email,
     assigned: 0,
     created: 0,
+    completed: 0,
     withMergedPRs: 0,
     totalHandled: 0,
   };
@@ -302,11 +303,17 @@ async function getUserIssueStats(user, options = {}) {
   
   stats.assigned = assignedCount;
   
-  // Check assigned issues for merged PRs
+  // Check assigned issues for merged PRs and completed status
   let mergedPRCount = 0;
+  let completedCount = 0;
   for (const issue of assignedIssuesList) {
     if (await hasMergedPR(issue)) {
       mergedPRCount++;
+    }
+    // Check if issue is completed
+    const state = await issue.state;
+    if (state && (state.name === 'Done' || state.name === 'Completed' || state.name === 'Merged' || state.name === 'Canceled')) {
+      completedCount++;
     }
   }
   
@@ -348,17 +355,23 @@ async function getUserIssueStats(user, options = {}) {
   
   stats.created = createdCount;
   
-  // Check created issues for merged PRs (avoid double counting if same issue)
+  // Check created issues for merged PRs and completed status (avoid double counting if same issue)
   const checkedIssueIds = new Set(assignedIssuesList.map(i => i.id));
   for (const issue of createdIssuesList) {
     if (!checkedIssueIds.has(issue.id)) {
       if (await hasMergedPR(issue)) {
         mergedPRCount++;
       }
+      // Check if issue is completed
+      const state = await issue.state;
+      if (state && (state.name === 'Done' || state.name === 'Completed' || state.name === 'Merged' || state.name === 'Canceled')) {
+        completedCount++;
+      }
     }
   }
   
   stats.withMergedPRs = mergedPRCount;
+  stats.completed = completedCount;
   
   // Total handled = assigned + created (we'll deduplicate if needed)
   // For now, we'll count them separately and show both
@@ -442,6 +455,7 @@ async function generateTeamIssuesReport(teamEmails = null, options = {}) {
       totalDevelopers: teamStats.length,
       totalIssuesAssigned: teamStats.reduce((sum, s) => sum + s.assigned, 0),
       totalIssuesCreated: teamStats.reduce((sum, s) => sum + s.created, 0),
+      totalIssuesCompleted: teamStats.reduce((sum, s) => sum + s.completed, 0),
       totalIssuesWithMergedPRs: teamStats.reduce((sum, s) => sum + s.withMergedPRs, 0),
       totalIssuesHandled: teamStats.reduce((sum, s) => sum + s.totalHandled, 0),
     },
@@ -474,6 +488,7 @@ function displayReport(report) {
   console.log(`   Total Developers: ${report.summary.totalDevelopers}`);
   console.log(`   Total Issues Assigned: ${report.summary.totalIssuesAssigned}`);
   console.log(`   Total Issues Created: ${report.summary.totalIssuesCreated}`);
+  console.log(`   Total Issues Completed: ${report.summary.totalIssuesCompleted}`);
   console.log(`   Total Issues with Merged PRs: ${report.summary.totalIssuesWithMergedPRs}`);
   console.log(`   Total Issues Handled: ${report.summary.totalIssuesHandled}`);
   console.log('');
@@ -497,10 +512,11 @@ function displayReport(report) {
     'Developer Name'.padEnd(maxNameLength + 2) + 
     'Assigned'.padStart(12) + 
     'Created'.padStart(12) + 
+    'Completed'.padStart(12) + 
     'Merged PRs'.padStart(12) + 
     'Total'.padStart(12)
   );
-  console.log('   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12));
+  console.log('   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12 + 12));
   
   // Data rows
   report.teamStats.forEach(stats => {
@@ -508,10 +524,29 @@ function displayReport(report) {
       stats.userName.padEnd(maxNameLength + 2) + 
       stats.assigned.toString().padStart(12) + 
       stats.created.toString().padStart(12) + 
+      stats.completed.toString().padStart(12) + 
       stats.withMergedPRs.toString().padStart(12) + 
       stats.totalHandled.toString().padStart(12)
     );
   });
+  
+  // Calculate totals
+  const totalAssigned = report.teamStats.reduce((sum, s) => sum + s.assigned, 0);
+  const totalCreated = report.teamStats.reduce((sum, s) => sum + s.created, 0);
+  const totalCompleted = report.teamStats.reduce((sum, s) => sum + s.completed, 0);
+  const totalMergedPRs = report.teamStats.reduce((sum, s) => sum + s.withMergedPRs, 0);
+  const totalHandled = report.teamStats.reduce((sum, s) => sum + s.totalHandled, 0);
+  
+  // Totals row
+  console.log('   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12 + 12));
+  console.log('   ' + 
+    'TOTAL'.padEnd(maxNameLength + 2) + 
+    totalAssigned.toString().padStart(12) + 
+    totalCreated.toString().padStart(12) + 
+    totalCompleted.toString().padStart(12) + 
+    totalMergedPRs.toString().padStart(12) + 
+    totalHandled.toString().padStart(12)
+  );
   
   console.log('\n' + '='.repeat(80) + '\n');
 }
@@ -542,6 +577,7 @@ function generateTextReport(report) {
   text += `   Total Developers: ${report.summary.totalDevelopers}\n`;
   text += `   Total Issues Assigned: ${report.summary.totalIssuesAssigned}\n`;
   text += `   Total Issues Created: ${report.summary.totalIssuesCreated}\n`;
+  text += `   Total Issues Completed: ${report.summary.totalIssuesCompleted}\n`;
   text += `   Total Issues with Merged PRs: ${report.summary.totalIssuesWithMergedPRs}\n`;
   text += `   Total Issues Handled: ${report.summary.totalIssuesHandled}\n`;
   text += '\n';
@@ -565,10 +601,11 @@ function generateTextReport(report) {
     'Developer Name'.padEnd(maxNameLength + 2) + 
     'Assigned'.padStart(12) + 
     'Created'.padStart(12) + 
+    'Completed'.padStart(12) + 
     'Merged PRs'.padStart(12) + 
     'Total'.padStart(12) + 
     '\n';
-  text += '   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12) + '\n';
+  text += '   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12 + 12) + '\n';
   
   // Data rows
   report.teamStats.forEach(stats => {
@@ -576,10 +613,29 @@ function generateTextReport(report) {
       stats.userName.padEnd(maxNameLength + 2) + 
       stats.assigned.toString().padStart(12) + 
       stats.created.toString().padStart(12) + 
+      stats.completed.toString().padStart(12) + 
       stats.withMergedPRs.toString().padStart(12) + 
       stats.totalHandled.toString().padStart(12) + 
       '\n';
   });
+  
+  // Calculate totals
+  const totalAssigned = report.teamStats.reduce((sum, s) => sum + s.assigned, 0);
+  const totalCreated = report.teamStats.reduce((sum, s) => sum + s.created, 0);
+  const totalCompleted = report.teamStats.reduce((sum, s) => sum + s.completed, 0);
+  const totalMergedPRs = report.teamStats.reduce((sum, s) => sum + s.withMergedPRs, 0);
+  const totalHandled = report.teamStats.reduce((sum, s) => sum + s.totalHandled, 0);
+  
+  // Totals row
+  text += '   ' + '-'.repeat(maxNameLength + 2 + 12 + 12 + 12 + 12 + 12) + '\n';
+  text += '   ' + 
+    'TOTAL'.padEnd(maxNameLength + 2) + 
+    totalAssigned.toString().padStart(12) + 
+    totalCreated.toString().padStart(12) + 
+    totalCompleted.toString().padStart(12) + 
+    totalMergedPRs.toString().padStart(12) + 
+    totalHandled.toString().padStart(12) + 
+    '\n';
   
   text += '\n' + '='.repeat(80) + '\n';
   
