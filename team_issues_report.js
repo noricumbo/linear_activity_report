@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { LinearClient } from '@linear/sdk';
 import fs from 'fs/promises';
 import path from 'path';
+import readline from 'node:readline/promises';
 
 // Load API key from environment variable
 const apiKey = process.env.LINEAR_API_KEY;
@@ -822,10 +823,48 @@ function formatMonthName(month, year) {
   return `${monthNames[month]} ${year}`;
 }
 
+/**
+ * When using --all, ask for confirmation (slow / heavy). Prefer TEAM_EMAILS in .env for a focused report.
+ * Non-interactive: set TEAM_REPORT_ALL_CONFIRM=1 or pass --yes.
+ */
+async function confirmWorkspaceWideReport(skipPrompt) {
+  if (skipPrompt) {
+    console.log('⚠️  --yes: skipping confirmation; reporting on every user in the workspace.\n');
+    return true;
+  }
+
+  const envConfirm = process.env.TEAM_REPORT_ALL_CONFIRM;
+  if (envConfirm === '1' || envConfirm?.toLowerCase() === 'yes') {
+    console.log('   Proceeding: TEAM_REPORT_ALL_CONFIRM is set (no prompt).\n');
+    return true;
+  }
+
+  console.log('\n⚠️  --all includes every user in your Linear workspace.');
+  console.log('   This can take a long time and generate many API calls (issues, merged-PR checks, etc.).');
+  console.log('   For routine team reports, set TEAM_EMAILS in .env to only the people you care about.\n');
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.error('❌ This prompt needs an interactive terminal. Options:');
+    console.error('   • Set TEAM_EMAILS in .env (recommended)');
+    console.error('   • Run with TEAM_REPORT_ALL_CONFIRM=1 if you really need --all in CI');
+    console.error('   • Add --yes to skip confirmation (automation only)\n');
+    process.exit(1);
+  }
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const answer = await rl.question('Type yes to run the full workspace report, or anything else to cancel: ');
+    const normalized = answer.trim().toLowerCase();
+    return normalized === 'yes' || normalized === 'y';
+  } finally {
+    rl.close();
+  }
+}
+
 // Main execution
 async function main() {
   // Parse command line arguments
-  // Usage: node team_issues_report.js [email1] [email2] ... [--days N] [--all] [--export]
+  // Usage: node team_issues_report.js [email1] [email2] ... [--days N] [--all] [--export] [--yes]
   const args = process.argv.slice(2);
   
   let teamEmails = [];
@@ -835,6 +874,7 @@ async function main() {
   let monthName = null;
   let useAllUsers = false;
   let exportJson = false;
+  let skipAllConfirm = false;
   
   // Check for team emails in .env file first
   const envTeamEmails = process.env.TEAM_EMAILS;
@@ -889,6 +929,8 @@ async function main() {
       i++; // Skip next argument
     } else if (arg === '--export' || arg === '--json') {
       exportJson = true;
+    } else if (arg === '--yes' || arg === '-y') {
+      skipAllConfirm = true;
     } else if (!arg.startsWith('--')) {
       // Command line emails override .env emails
       if (emailsFromEnv) {
@@ -922,10 +964,10 @@ async function main() {
     console.log('ℹ️  No team emails provided.');
     console.log('\nOptions:');
     console.log('  1. Set TEAM_EMAILS in your .env file (comma or space separated)');
-    console.log('  2. Use --all to report on all users');
+    console.log('  2. Use --all to report on all users (interactive confirmation; or --yes / TEAM_REPORT_ALL_CONFIRM=1)');
     console.log('  3. Provide email addresses as command line arguments');
     console.log('\nUsage:');
-    console.log('  node team_issues_report.js [email1] [email2] ... [--days N] [--month MONTH] [--all] [--export]');
+    console.log('  node team_issues_report.js [email1] [email2] ... [--days N] [--month MONTH] [--all] [--export] [--yes]');
     console.log('\nExamples:');
     console.log('  node team_issues_report.js developer1@example.com developer2@example.com');
     console.log('  node team_issues_report.js developer1@example.com --days 60');
@@ -934,6 +976,7 @@ async function main() {
     console.log('  node team_issues_report.js --all --month "October 2024"');
     console.log('  node team_issues_report.js --all --month 10/2024');
     console.log('  node team_issues_report.js --all --export');
+    console.log('  node team_issues_report.js --all --yes   # skip confirmation (automation)');
     console.log('\nMonth formats supported:');
     console.log('  "October", "Oct", "10", "2024-10", "October 2024", "Oct 2024", "10/2024"');
     console.log('\n.env file example:');
@@ -941,6 +984,14 @@ async function main() {
     console.log('  TEAM_DAYS_BACK=30');
     console.log('');
     process.exit(1);
+  }
+  
+  if (useAllUsers) {
+    const confirmed = await confirmWorkspaceWideReport(skipAllConfirm);
+    if (!confirmed) {
+      console.log('\nCancelled. Use TEAM_EMAILS in .env or pass email addresses to limit the report to your team.\n');
+      process.exit(0);
+    }
   }
   
   try {
