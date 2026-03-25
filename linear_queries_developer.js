@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { LinearClient } from '@linear/sdk';
+import { hasMergedPR } from './team_issues_report.js';
 
 // Load API key from environment variable
 const apiKey = process.env.LINEAR_API_KEY;
@@ -96,6 +97,7 @@ async function getUserActivity(userEmail, options = {}) {
       issueUpdates: [],
       issueCreations: [],
       issueAssignments: [],
+      withMergedPRs: 0,
     };
     
     // Get all comments by this user
@@ -290,6 +292,24 @@ async function getUserActivity(userEmail, options = {}) {
     createdSpinner.stop();
     console.log(`   Found ${createdIssues.nodes.length} created issue(s)`);
     
+    const mergedSpinner = createSpinner('Checking issues for merged PRs');
+    mergedSpinner.start();
+    let mergedPRCount = 0;
+    for (const issue of assignedIssues.nodes) {
+      if (await hasMergedPR(issue)) {
+        mergedPRCount++;
+      }
+    }
+    const assignedIssueIds = new Set(assignedIssues.nodes.map((i) => i.id));
+    for (const issue of createdIssues.nodes) {
+      if (!assignedIssueIds.has(issue.id) && (await hasMergedPR(issue))) {
+        mergedPRCount++;
+      }
+    }
+    mergedSpinner.stop();
+    console.log(`   Found ${mergedPRCount} issue(s) with merged PR(s) (assigned + created, deduplicated)`);
+    activity.withMergedPRs = mergedPRCount;
+    
     return activity;
   } catch (error) {
     console.error('Error fetching user activity:', error);
@@ -308,6 +328,7 @@ function displaySummary(activity) {
   console.log(`   Issue Interactions: ${activity.issueUpdates.length}`);
   console.log(`   Issues Created: ${activity.issueCreations.length}`);
   console.log(`   Issues Assigned: ${activity.issueAssignments.length}`);
+  console.log(`   Issues with merged PRs: ${activity.withMergedPRs}`);
   console.log('='.repeat(80) + '\n');
 }
 
@@ -440,6 +461,7 @@ function generateTextReport(activity) {
   report += `   Issue Interactions: ${activity.issueUpdates.length}\n`;
   report += `   Issues Created: ${activity.issueCreations.length}\n`;
   report += `   Issues Assigned: ${activity.issueAssignments.length}\n`;
+  report += `   Issues with merged PRs: ${activity.withMergedPRs}\n`;
   report += '='.repeat(80) + '\n';
   
   return report;

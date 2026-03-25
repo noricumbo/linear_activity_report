@@ -1001,6 +1001,7 @@ export {
   displayReport, 
   exportReportToText, 
   exportReportToJSON,
-  getUserIssueStats 
+  getUserIssueStats,
+  hasMergedPR,
 };
 
