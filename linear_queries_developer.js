@@ -35,9 +35,10 @@ function normalizeLineTerminators(text) {
  * @param {Object} options - Optional filters
  * @param {Date} options.since - Only get activity since this date
  * @param {number} options.limit - Maximum number of results per query
+ * @param {boolean} options.includeArchived - Linear `includeArchived` on issues and comments queries (default false)
  */
 async function getUserActivity(userEmail, options = {}) {
-  const { since, limit = 100 } = options;
+  const { since, limit = 100, includeArchived = false } = options;
   
   try {
     // First, find the user by email (with pagination to get all users)
@@ -113,6 +114,7 @@ async function getUserActivity(userEmail, options = {}) {
     const comments = await linearClient.comments({
       filter: commentsFilter,
       first: limit,
+      ...(includeArchived && { includeArchived: true }),
     });
     
     for (const comment of comments.nodes) {
@@ -242,6 +244,7 @@ async function getUserActivity(userEmail, options = {}) {
     const assignedIssues = await linearClient.issues({
       filter: assignedFilter,
       first: limit,
+      ...(includeArchived && { includeArchived: true }),
     });
     
     console.log(`   Found ${assignedIssues.nodes.length} assigned issue(s)`);
@@ -274,6 +277,7 @@ async function getUserActivity(userEmail, options = {}) {
     const createdIssues = await linearClient.issues({
       filter: createdFilter,
       first: limit,
+      ...(includeArchived && { includeArchived: true }),
     });
     
     console.log(`   Found ${createdIssues.nodes.length} created issue(s)`);
@@ -564,8 +568,16 @@ async function main() {
     console.log(`📅 Fetching activity from the last ${daysBack} days (since ${since.toLocaleDateString()})\n`);
   }
   
+  const includeArchived =
+    process.env.INCLUDE_ARCHIVED_ISSUES === '1' ||
+    process.env.INCLUDE_ARCHIVED_ISSUES === 'true' ||
+    process.argv.includes('--include-archived');
+  if (includeArchived) {
+    console.log('📦 Including archived issues in issues & comments queries (Linear includeArchived)\n');
+  }
+
   try {
-    const activity = await getUserActivity(userEmail, { since, limit: 100 });
+    const activity = await getUserActivity(userEmail, { since, limit: 100, includeArchived });
     
     // Check if we got zero results but there might be activity outside the date range
     const totalActivity = activity.comments.length + activity.issueUpdates.length + 
